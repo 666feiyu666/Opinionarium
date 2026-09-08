@@ -30,6 +30,8 @@ void keyPressed() {
     world.changeSpeed(0.25);
   } else if (key == '-' || key == '_') {
     world.changeSpeed(-0.25);
+  } else if (key == 'e' || key == 'E') {
+    world.toggleNetwork();
   } else if (keyCode == RIGHT) {
     world.stepOnce();
   }
@@ -47,7 +49,7 @@ void displayHeader() {
 
   fill(160, 166, 180);
   textSize(12);
-  text("SPACE  play / pause     RIGHT  step     R  reset     +/-  speed", 29, 51);
+  text("SPACE  play / pause     RIGHT  step     R  reset     +/-  speed     E  network", 29, 51);
 
   textAlign(RIGHT, CENTER);
   fill(world.paused ? color(238, 173, 74) : color(104, 211, 151));
