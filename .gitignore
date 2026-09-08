@@ -1,0 +1,21 @@
+# Processing exports and generated files
+application.*
+applet/
+build/
+out/
+*.class
+
+# Editor metadata
+.vscode/
+.idea/
+*.code-workspace
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*~
