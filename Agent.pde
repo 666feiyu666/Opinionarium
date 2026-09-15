@@ -1,162 +1,74 @@
 class Agent {
-  int id;
-  PVector position;
+  final int id;
+  final PVector position;
+  final boolean leader;
+  final float visualScale, breathPhase;
+  Belief belief;
+  float opinion, displayedOpinion, targetRadius, displayRadius;
+  float arrivalFlash=0, degreePulse=0, degreePulseDirection=0, emissionPulse=0;
+  int followerCount=0, following=0;
+  boolean selected=false, speaking=false;
 
-  float opinion;
-  float displayedOpinion;
-  float activity;
-  float arrivalFlash = 0;
-  float degreePulse = 0;
-  float degreePulseDirection = 0;
-  float emissionPulse = 0;
-  float targetRadius;
-  float displayRadius;
-  float breathPhase;
-
-  int followerCount = 0;
-
-  boolean leader;
-  boolean selected = false;
-  boolean speaking = false;
-
-  final float MIN_RADIUS = 9;
-  final float MAX_RADIUS = 38;
-  final float AREA_PER_FOLLOWER = 90;
-
-  Agent(int id, PVector position, float opinion, float activity, boolean leader) {
-    this.id = id;
-    this.position = position;
-    this.opinion = opinion;
-    this.displayedOpinion = opinion;
-    this.activity = activity;
-    this.leader = leader;
-    this.breathPhase = random(TWO_PI);
-    this.targetRadius = radiusForFollowerCount(0);
-    this.displayRadius = targetRadius;
+  Agent(int id, PVector position, float opinion, boolean leader, float visualScale) {
+    this.id=id; this.position=position; this.opinion=opinion; displayedOpinion=opinion;
+    this.leader=leader; this.visualScale=visualScale;
+    breathPhase=new Random(4700L+id).nextFloat()*TWO_PI;
+    displayRadius=targetRadius=radiusForFollowerCount(0);
   }
-
-  void update(float deltaSeconds) {
-    arrivalFlash = max(0, arrivalFlash - deltaSeconds * 1.8);
-    degreePulse = max(0, degreePulse - deltaSeconds * 1.25);
-    emissionPulse = max(0, emissionPulse - deltaSeconds * 1.7);
-
-    float opinionBlend = min(1, deltaSeconds * 5.5);
-    float radiusBlend = min(1, deltaSeconds * 5.0);
-    displayedOpinion = lerp(displayedOpinion, opinion, opinionBlend);
-    displayRadius = lerp(displayRadius, targetRadius, radiusBlend);
+  void update(float dt) {
+    arrivalFlash=max(0,arrivalFlash-dt*1.8);
+    degreePulse=max(0,degreePulse-dt*1.25);
+    emissionPulse=max(0,emissionPulse-dt*1.7);
+    displayedOpinion=lerp(displayedOpinion,opinion,min(1,dt*5.5));
+    displayRadius=lerp(displayRadius,targetRadius,min(1,dt*5));
   }
-
   void display() {
-    float diameter = displayRadius * 2;
-    float breath = 0.5 + 0.5 * sin(millis() * (0.0012 + activity * 0.0012) + breathPhase);
-    float auraDiameter = diameter + 7 + breath * 4;
-
-    noStroke();
-    fill(opinionColor(), 18 + 18 * breath);
-    circle(position.x, position.y, auraDiameter);
-
+    float diameter=displayRadius*2;
+    float breath=0.5+0.5*sin(world.player.visualTime*1.4+breathPhase);
+    float unit=visualScale;
+    noStroke(); fill(opinionColor(),18+18*breath);
+    circle(position.x,position.y,diameter+(5+breath*3)*unit);
     if (degreePulse > 0) {
-      float pulseProgress = 1 - degreePulse;
-      float pulseOffset;
-
-      if (degreePulseDirection > 0) {
-        pulseOffset = 4 + pulseProgress * 18;
-      } else {
-        pulseOffset = 5 + degreePulse * 18;
-      }
-
-      noFill();
-      stroke(239, 242, 247, 150 * degreePulse);
-      strokeWeight(1.4);
-      circle(position.x, position.y, diameter + pulseOffset);
+      float offset=degreePulseDirection > 0 ? 3+(1-degreePulse)*12 : 3+degreePulse*12;
+      noFill(); stroke(239,242,247,150*degreePulse); strokeWeight(0.9*unit);
+      circle(position.x,position.y,diameter+offset*unit);
     }
-
     if (arrivalFlash > 0) {
-      noFill();
-      stroke(opinionColor(), 185 * arrivalFlash);
-      strokeWeight(1.8);
-      float rippleProgress = 1 - arrivalFlash;
-      circle(position.x, position.y, diameter + 7 + rippleProgress * 24);
+      noFill(); stroke(opinionColor(),185*arrivalFlash); strokeWeight(1.2*unit);
+      circle(position.x,position.y,diameter+(4+(1-arrivalFlash)*14)*unit);
     }
-
     if (leader) {
-      noFill();
-      stroke(224, 229, 239, 150);
-      strokeWeight(1.2);
-      circle(position.x, position.y, diameter + 9);
-      stroke(224, 229, 239, 70);
-      circle(position.x, position.y, diameter + 15 + breath * 2);
+      noFill(); stroke(224,229,239,160); strokeWeight(0.85*unit);
+      circle(position.x,position.y,diameter+5*unit);
+      stroke(224,229,239,75);
+      circle(position.x,position.y,diameter+(9+breath)*unit);
     }
-
+    if (speaking && emissionPulse > 0) {
+      noFill(); stroke(255,175*emissionPulse); strokeWeight(unit);
+      circle(position.x,position.y,diameter+(6+(1-emissionPulse)*15)*unit);
+    }
     if (selected) {
-      noFill();
-      stroke(255, 245);
-      strokeWeight(2);
-      circle(position.x, position.y, diameter + (leader ? 23 : 14));
+      noFill(); stroke(255,245); strokeWeight(1.6*unit);
+      circle(position.x,position.y,diameter+(leader ? 15 : 9)*unit);
     }
-
-    if (speaking) {
-      noFill();
-      stroke(255, 55 + 155 * emissionPulse);
-      strokeWeight(1.8);
-      float pulse = 11 + (1 - emissionPulse) * 17;
-      circle(position.x, position.y, diameter + pulse);
-    }
-
-    noStroke();
-    fill(0, 30);
-    circle(position.x + 2, position.y + 3, diameter + 2);
-
-    fill(opinionColor());
-    circle(position.x, position.y, diameter);
-
-    fill(255, 28);
-    circle(
-      position.x - displayRadius * 0.28,
-      position.y - displayRadius * 0.30,
-      max(3, displayRadius * 0.58)
-    );
+    noStroke(); fill(0,30); circle(position.x+unit,position.y+2*unit,diameter+unit);
+    fill(opinionColor()); circle(position.x,position.y,diameter);
+    fill(255,28);
+    circle(position.x-displayRadius*0.28,position.y-displayRadius*0.30,max(1.5*unit,displayRadius*0.58));
   }
-
-  boolean containsPoint(float x, float y) {
-    float hitRadius = displayRadius + (leader ? 10 : 6);
-    return dist(x, y, position.x, position.y) <= hitRadius;
+  boolean containsPoint(float x,float y) {
+    return dist(x,y,position.x,position.y) <= displayRadius+4*visualScale;
   }
-
-  float speakingWeight() {
-    return activity * (leader ? 2.4 : 1.0);
+  void beginSpeaking() { speaking=true; emissionPulse=1; }
+  void setFollowerCount(int count, boolean animate) {
+    int difference=count-followerCount;
+    followerCount=count; targetRadius=radiusForFollowerCount(count);
+    if (!animate) displayRadius=targetRadius;
+    else if (difference != 0) { degreePulseDirection=difference > 0 ? 1 : -1; degreePulse=1; }
   }
-
-  void receive(float messageStance) {
-    float influenceRate = leader ? 0.08 : 0.16;
-    opinion += influenceRate * (messageStance - opinion);
-    opinion = constrain(opinion, -1, 1);
-    arrivalFlash = 1;
-  }
-
-  void beginSpeaking() {
-    speaking = true;
-    emissionPulse = 1;
-  }
-
-  void setFollowerCount(int newFollowerCount, boolean animate) {
-    int difference = newFollowerCount - followerCount;
-    followerCount = newFollowerCount;
-    targetRadius = radiusForFollowerCount(followerCount);
-
-    if (!animate) {
-      displayRadius = targetRadius;
-    } else if (difference != 0) {
-      degreePulseDirection = difference > 0 ? 1 : -1;
-      degreePulse = 1;
-    }
-  }
-
   float radiusForFollowerCount(int count) {
-    return min(MAX_RADIUS, sqrt(MIN_RADIUS * MIN_RADIUS + count * AREA_PER_FOLLOWER));
+    // Fixed area scale throughout a recording; no degree saturation.
+    return visualScale*sqrt(3.2*3.2+count*3.4);
   }
-
-  color opinionColor() {
-    return opinionToColor(displayedOpinion);
-  }
+  color opinionColor() { return opinionToColor(displayedOpinion); }
 }

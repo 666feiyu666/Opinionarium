@@ -1,490 +1,151 @@
 class World {
+  final ReplayData data;
   ArrayList<Agent> agents = new ArrayList<Agent>();
   ArrayList<Connection> connections = new ArrayList<Connection>();
   ArrayList<Message> messages = new ArrayList<Message>();
-
   Agent selectedAgent;
-  Agent currentSpeaker;
+  Layout layout;
+  PlaybackController player;
+  boolean showFullNetwork=false;
+  int stateRound=0;
+  float radiusScale;
+  final float PANEL_WIDTH=280;
 
-  boolean paused = false;
-  boolean pauseAfterCurrentCycle = false;
-  boolean showFullNetwork = false;
-
-  float speedMultiplier = 1.0;
-  float timeUntilNextPost = 0.7;
-  float cycleSettleTime = 0;
-  int cycleCount = 0;
-  int resetCount = 0;
-  int previousMillis;
-
-  final int AGENT_COUNT = 30;
-  final float PANEL_WIDTH = 260;
-  final float FOLLOW_DISTANCE = 0.45;
-  final float UNFOLLOW_DISTANCE = 0.95;
-  final float FOLLOW_PROBABILITY = 0.55;
-  final float UNFOLLOW_PROBABILITY = 0.45;
-  final float DISCOVERY_PROBABILITY = 0.60;
-
+  World(ReplayData data) {
+    this.data=data;
+    float w=width-PANEL_WIDTH, h=height-120;
+    radiusScale=constrain(sqrt(w*h/(float)data.size())/35,0.55,1.6);
+    layout=new Layout(data.size(),w,h);
+    player=new PlaybackController(this);
+    for (int i=0;i<data.size();i++) {
+      agents.add(new Agent(data.ids[i],layout.positions[i],data.rounds[0].states[i].opinion(),
+        data.leaders.contains(data.ids[i]),radiusScale));
+    }
+    int[] maxFollowers=new int[data.size()];
+    for (ReplayRound rr : data.rounds) {
+      int[] degree=new int[data.size()];
+      for (int[] edge : rr.edges) degree[edge[1]]++;
+      for (int i=0;i<degree.length;i++) maxFollowers[i]=max(maxFollowers[i],degree[i]);
+    }
+    float[] radii=new float[data.size()];
+    for (int i=0;i<radii.length;i++) radii[i]=agents.get(i).radiusForFollowerCount(maxFollowers[i])+(agents.get(i).leader ? 5*radiusScale : 0);
+    layout.separate(radii);
+    applyState(0,false);
+  }
   void reset() {
-    agents.clear();
+    messages.clear(); player=new PlaybackController(this);
+    layout.resetView();
+    for (Agent a:agents) {
+      a.arrivalFlash=a.degreePulse=a.emissionPulse=0; a.speaking=false;
+    }
+    applyState(0,false);
+  }
+  void applyState(int round, boolean animate) {
+    stateRound=round;
+    ReplayRound rr=data.rounds[round];
     connections.clear();
-    messages.clear();
-
-    selectedAgent = null;
-    currentSpeaker = null;
-    paused = false;
-    pauseAfterCurrentCycle = false;
-    showFullNetwork = false;
-    speedMultiplier = 1.0;
-    timeUntilNextPost = 0.7;
-    cycleSettleTime = 0;
-    cycleCount = 0;
-
-    randomSeed(4700 + resetCount);
-    resetCount++;
-
-    createAgents();
-    createConnections();
-    refreshAllFollowerCounts(false);
-    previousMillis = millis();
-  }
-
-  void createAgents() {
-    int leaderId = int(random(AGENT_COUNT));
-
-    for (int id = 0; id < AGENT_COUNT; id++) {
-      PVector position = findOpenPosition();
-      float opinion = random(-1, 1);
-      float activity = random(0.35, 1.0);
-      boolean leader = id == leaderId;
-
-      agents.add(new Agent(id, position, opinion, activity, leader));
+    int[] followers=new int[data.size()];
+    int[] following=new int[data.size()];
+    for (int[] edge:rr.edges) {
+      connections.add(new Connection(agents.get(edge[0]),agents.get(edge[1])));
+      following[edge[0]]++; followers[edge[1]]++;
+    }
+    for (int i=0;i<agents.size();i++) {
+      Agent a=agents.get(i);
+      a.belief=rr.states[i]; a.opinion=a.belief.opinion(); a.following=following[i];
+      a.setFollowerCount(followers[i],animate);
+      if (!animate) a.displayedOpinion=a.opinion;
     }
   }
-
-  PVector findOpenPosition() {
-    float minX = 70;
-    float maxX = width - PANEL_WIDTH - 50;
-    float minY = 105;
-    float maxY = height - 55;
-
-    for (int attempt = 0; attempt < 200; attempt++) {
-      PVector candidate = new PVector(random(minX, maxX), random(minY, maxY));
-      boolean open = true;
-
-      for (Agent agent : agents) {
-        if (PVector.dist(candidate, agent.position) < 48) {
-          open = false;
-          break;
-        }
-      }
-
-      if (open) {
-        return candidate;
-      }
-    }
-
-    return new PVector(random(minX, maxX), random(minY, maxY));
-  }
-
-  void createConnections() {
-    for (Agent follower : agents) {
-      int desiredConnections = 2 + int(random(2));
-
-      while (countFollowing(follower) < desiredConnections) {
-        Agent followed = agents.get(int(random(agents.size())));
-
-        if (follower != followed && !hasConnection(follower, followed)) {
-          connections.add(new Connection(follower, followed));
-        }
-      }
-    }
-  }
-
-  int countFollowing(Agent agent) {
-    int count = 0;
-
-    for (Connection connection : connections) {
-      if (connection.follower == agent) {
-        count++;
-      }
-    }
-
-    return count;
-  }
-
-  int countFollowers(Agent agent) {
-    int count = 0;
-
-    for (Connection connection : connections) {
-      if (connection.followed == agent) {
-        count++;
-      }
-    }
-
-    return count;
-  }
-
-  boolean hasConnection(Agent follower, Agent followed) {
-    return findConnection(follower, followed) != null;
-  }
-
-  Connection findConnection(Agent follower, Agent followed) {
-    for (Connection connection : connections) {
-      if (connection.follower == follower && connection.followed == followed) {
-        return connection;
-      }
-    }
-
-    return null;
-  }
-
-  void refreshAllFollowerCounts(boolean animate) {
-    for (Agent agent : agents) {
-      agent.setFollowerCount(countFollowers(agent), animate);
-    }
-  }
-
-  void refreshFollowerCount(Agent agent, boolean animate) {
-    agent.setFollowerCount(countFollowers(agent), animate);
-  }
-
-  boolean addConnection(Agent follower, Agent followed, boolean animate) {
-    if (follower == followed || hasConnection(follower, followed)) {
-      return false;
-    }
-
-    connections.add(new Connection(follower, followed));
-    refreshFollowerCount(followed, animate);
-    return true;
-  }
-
-  boolean removeConnection(Agent follower, Agent followed, boolean animate) {
-    Connection connection = findConnection(follower, followed);
-
-    if (connection == null) {
-      return false;
-    }
-
-    connections.remove(connection);
-    refreshFollowerCount(followed, animate);
-    return true;
-  }
-
-  void evaluateRelationship(Agent viewer, Agent author) {
-    float opinionDistance = abs(viewer.opinion - author.opinion);
-    boolean currentlyFollowing = hasConnection(viewer, author);
-
-    if (!currentlyFollowing &&
-      opinionDistance < FOLLOW_DISTANCE &&
-      random(1) < FOLLOW_PROBABILITY) {
-      addConnection(viewer, author, true);
-    } else if (currentlyFollowing &&
-      opinionDistance > UNFOLLOW_DISTANCE &&
-      random(1) < UNFOLLOW_PROBABILITY) {
-      removeConnection(viewer, author, true);
-    }
-  }
-
-  boolean isAlreadyReceiving(Agent candidate) {
-    for (Message message : messages) {
-      if (message.receiver == candidate) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  void update() {
-    int now = millis();
-    float deltaSeconds = min((now - previousMillis) / 1000.0, 0.05);
-    previousMillis = now;
-
-    if (paused) {
-      return;
-    }
-
-    float scaledDelta = deltaSeconds * speedMultiplier;
-
-    for (Agent agent : agents) {
-      agent.update(scaledDelta);
-    }
-
-    for (int index = messages.size() - 1; index >= 0; index--) {
-      Message message = messages.get(index);
-      message.update(scaledDelta);
-
-      if (message.readyToDeliver()) {
-        message.receiver.receive(message.stance);
-        evaluateRelationship(message.receiver, message.author);
-        message.markDelivered();
-      }
-
-      if (message.finished()) {
-        messages.remove(index);
-      }
-    }
-
-    if (currentSpeaker != null && messages.isEmpty()) {
-      if (cycleSettleTime <= 0) {
-        cycleSettleTime = 0.55;
-      }
-
-      cycleSettleTime -= scaledDelta;
-
-      if (cycleSettleTime > 0) {
-        return;
-      }
-
-      currentSpeaker.speaking = false;
-      currentSpeaker = null;
-      cycleSettleTime = 0;
-
-      if (pauseAfterCurrentCycle) {
-        pauseAfterCurrentCycle = false;
-        paused = true;
-        return;
-      }
-    }
-
-    if (currentSpeaker == null) {
-      timeUntilNextPost -= scaledDelta;
-
-      if (timeUntilNextPost <= 0) {
-        beginNextPost();
-      }
-    }
-  }
-
-  void beginNextPost() {
-    if (agents.isEmpty() || currentSpeaker != null) {
-      return;
-    }
-
-    currentSpeaker = chooseSpeaker();
-    currentSpeaker.beginSpeaking();
-    cycleSettleTime = 0;
-    cycleCount++;
-
-    ArrayList<Connection> available = new ArrayList<Connection>();
-
-    for (Connection connection : connections) {
-      if (connection.followed == currentSpeaker) {
-        available.add(connection);
-      }
-    }
-
-    int audienceLimit = currentSpeaker.leader ? 5 : 2;
-    int audienceSize = min(audienceLimit, available.size());
-
-    for (int index = 0; index < audienceSize; index++) {
-      int connectionIndex = int(random(available.size()));
-      Connection connection = available.remove(connectionIndex);
-
-      messages.add(
-        new Message(
-          currentSpeaker,
-          connection.follower,
-          currentSpeaker.opinion
-        )
-      );
-    }
-
-    addDiscoveryMessages();
-
-    timeUntilNextPost = 0.75;
-  }
-
-  void addDiscoveryMessages() {
-    int discoverySlots = currentSpeaker.leader ? 2 : 1;
-
-    for (int slot = 0; slot < discoverySlots; slot++) {
-      float chance = currentSpeaker.leader ? min(1, DISCOVERY_PROBABILITY + 0.2) : DISCOVERY_PROBABILITY;
-
-      if (random(1) >= chance && !messages.isEmpty()) {
-        continue;
-      }
-
-      ArrayList<Agent> candidates = new ArrayList<Agent>();
-
-      for (Agent candidate : agents) {
-        if (candidate != currentSpeaker &&
-          !hasConnection(candidate, currentSpeaker) &&
-          !isAlreadyReceiving(candidate)) {
-          candidates.add(candidate);
-        }
-      }
-
-      if (candidates.isEmpty()) {
-        return;
-      }
-
-      Agent receiver = candidates.get(int(random(candidates.size())));
-      messages.add(new Message(currentSpeaker, receiver, currentSpeaker.opinion));
-    }
-  }
-
-  Agent chooseSpeaker() {
-    float totalWeight = 0;
-
-    for (Agent agent : agents) {
-      totalWeight += agent.speakingWeight();
-    }
-
-    float choice = random(totalWeight);
-
-    for (Agent agent : agents) {
-      choice -= agent.speakingWeight();
-
-      if (choice <= 0) {
-        return agent;
-      }
-    }
-
-    return agents.get(agents.size() - 1);
-  }
-
   void display() {
-    for (Connection connection : connections) {
-      connection.display(showFullNetwork, selectedAgent);
-    }
-
-    for (Message message : messages) {
-      message.display();
-    }
-
-    for (Agent agent : agents) {
-      agent.display();
-    }
-
+    clip(0,82,int(width-PANEL_WIDTH),height-120);
+    pushMatrix();
+    layout.transform();
+    for (Connection c:connections) c.display(showFullNetwork,selectedAgent);
+    for (Message m:messages) m.display();
+    for (Agent a:agents) if (a != selectedAgent) a.display();
+    if (selectedAgent != null) selectedAgent.display();
+    popMatrix();
+    noClip();
     displayInspector();
+    displayFooter();
   }
-
+  void selectAgentAt(float x,float y) {
+    if (x >= width-PANEL_WIDTH || y < 82 || y > height-38) return;
+    PVector p=layout.local(x,y);
+    selectedAgent=null;
+    float nearest=Float.MAX_VALUE;
+    for (Agent a:agents) {
+      float distance=dist(p.x,p.y,a.position.x,a.position.y);
+      if (a.containsPoint(p.x,p.y) && distance < nearest) { selectedAgent=a; nearest=distance; }
+    }
+    for (Agent a:agents) a.selected=a == selectedAgent;
+  }
+  void field(String title,String value,float y) {
+    textAlign(LEFT,TOP); fill(143,152,170); text(title,width-PANEL_WIDTH+22,y);
+    textAlign(RIGHT,TOP); fill(230,234,240); text(value,width-22,y);
+  }
   void displayInspector() {
-    float panelX = width - PANEL_WIDTH;
-
-    noStroke();
-    fill(25, 28, 37, 245);
-    rect(panelX, 66, PANEL_WIDTH, height - 66);
-
-    fill(234);
-    textAlign(LEFT, TOP);
-    textSize(14);
-    text("AGENT INSPECTOR", panelX + 24, 96);
-
-    if (selectedAgent == null) {
-      fill(137, 143, 157);
-      textSize(13);
-      textLeading(20);
-      text("Click an agent to inspect\nits current state.", panelX + 24, 132);
-      displayLegend(panelX + 24, height - 154);
-      return;
-    }
-
-    fill(245);
-    textSize(22);
-    text("Agent " + selectedAgent.id, panelX + 24, 134);
-
-    fill(158, 165, 180);
-    textSize(13);
-    text("Opinion", panelX + 24, 184);
-    text("Activity", panelX + 24, 222);
-    text("Leader", panelX + 24, 260);
-    text("Followers", panelX + 24, 298);
-    text("Following", panelX + 24, 336);
-
-    fill(239);
-    textAlign(RIGHT, TOP);
-    text(nf(selectedAgent.opinion, 1, 2), width - 24, 184);
-    text(nf(selectedAgent.activity, 1, 2), width - 24, 222);
-    text(selectedAgent.leader ? "Yes" : "No", width - 24, 260);
-    text(countFollowers(selectedAgent), width - 24, 298);
-    text(countFollowing(selectedAgent), width - 24, 336);
-
-    textAlign(LEFT, TOP);
-    fill(selectedAgent.opinionColor());
-    rect(panelX + 24, 378, PANEL_WIDTH - 48, 8, 4);
-
-    displayLegend(panelX + 24, height - 154);
-  }
-
-  void displayLegend(float x, float y) {
-    fill(158, 165, 180);
-    textAlign(LEFT, TOP);
+    float x=width-PANEL_WIDTH;
+    noStroke(); fill(25,28,37); rect(x,82,PANEL_WIDTH,height-82);
+    textAlign(LEFT,TOP); textSize(11); fill(140,154,175);
+    text("RECORDED SIMULATION",x+22,106);
+    textSize(18); fill(236); text(data.scenario+" / "+data.orientation,x+22,128);
     textSize(12);
-    text("OPINION", x, y);
-
-    for (int index = 0; index < 120; index++) {
-      float opinion = map(index, 0, 119, -1, 1);
-      stroke(opinionToColor(opinion));
-      line(x + index, y + 27, x + index, y + 37);
-    }
-
-    noStroke();
-    fill(130, 136, 150);
-    text("-1", x, y + 44);
-    textAlign(RIGHT, TOP);
-    text("+1", x + 120, y + 44);
-
-    textAlign(LEFT, TOP);
-    fill(130, 136, 150);
-    text("Size = followers", x, y + 78);
-    text("Double ring = opinion leader", x, y + 98);
-    text("E reveals hidden relationships", x, y + 118);
-  }
-
-  void selectAgentAt(float x, float y) {
-    selectedAgent = null;
-
-    for (int index = agents.size() - 1; index >= 0; index--) {
-      Agent agent = agents.get(index);
-
-      if (agent.containsPoint(x, y)) {
-        selectedAgent = agent;
-        break;
+    field("Agents",str(data.size()),170);
+    field("Opinion leaders",str(data.leaders.size()),194);
+    field("Relationships",str(connections.size()),218);
+    field("Committed state","Round "+stateRound,242);
+    stroke(56,62,77); line(x+22,276,width-22,276); noStroke();
+    textAlign(LEFT,TOP); fill(236); textSize(16);
+    text(selectedAgent == null ? "Explore an agent" : "Agent "+selectedAgent.id,x+22,298);
+    textSize(12);
+    if (selectedAgent == null) {
+      fill(146,156,174);
+      text("Click a node to inspect its belief,\nmessages and relationships.\n\nScroll to zoom. Drag to pan.\nV resets the view.",x+22,334);
+    } else {
+      Agent a=selectedAgent;
+      int i=data.index.get(a.id);
+      field("Role",a.leader ? "Opinion leader" : "Ordinary",334);
+      field("Signed belief",nf(a.opinion,1,4),360);
+      field("Beta a / b",String.format(java.util.Locale.US,"%.3f / %.3f",a.belief.a,a.belief.b),386);
+      field("Concentration",String.format(java.util.Locale.US,"%.3f",a.belief.a+a.belief.b),412);
+      field("Followers / following",a.followerCount+" / "+a.following,438);
+      int r=player.activeRound;
+      if (r > 0) {
+        ReplayRound rr=data.rounds[r];
+        field("Round "+r+" posted",rr.origins[i].posted ? "Yes" : "No",478);
+        field("Posting probability",nf((float)rr.origins[i].probability,1,3),504);
+        RecordedEvidence e=rr.evidence[i];
+        field("Round "+r+" received (+ / -)",e.support+" / "+e.oppose,530);
+        field("Evidence weight (+ / -)",nf((float)e.weightedSupport,1,2)+" / "+nf((float)e.weightedOppose,1,2),556);
       }
     }
-
-    for (Agent agent : agents) {
-      agent.selected = agent == selectedAgent;
+    float y=height-182;
+    textAlign(LEFT,TOP); fill(145,156,177); textSize(11); text("PRIVATE BELIEF",x+22,y);
+    for (int k=0;k<220;k++) {
+      stroke(opinionToColor(map(k,0,219,-1,1))); line(x+22+k,y+24,x+22+k,y+30);
     }
+    noStroke(); fill(155,164,181); text("-1",x+22,y+38); textAlign(RIGHT,TOP); text("+1",width-38,y+38);
+    textAlign(LEFT,TOP); text("Size: followers    Double ring: leader",x+22,y+65);
+    text("Arrow: follower > followed",x+22,y+86);
+    text("Particle: author > receiver",x+22,y+107);
+    text("Positions are visual, not model distances.",x+22,y+128);
   }
-
-  void togglePaused() {
-    paused = !paused;
-    pauseAfterCurrentCycle = false;
-    previousMillis = millis();
-  }
-
-  void stepOnce() {
-    pauseAfterCurrentCycle = true;
-    paused = false;
-    previousMillis = millis();
-
-    if (currentSpeaker == null && messages.isEmpty()) {
-      beginNextPost();
-    }
-  }
-
-  void changeSpeed(float amount) {
-    speedMultiplier = constrain(speedMultiplier + amount, 0.25, 4.0);
-  }
-
-  void toggleNetwork() {
-    showFullNetwork = !showFullNetwork;
+  void displayFooter() {
+    noStroke(); fill(21,24,32); rect(0,height-38,width-PANEL_WIDTH,38);
+    fill(141,154,176); textSize(11); textAlign(LEFT,CENTER);
+    int total=player.activeRound > 0 ? data.rounds[player.activeRound].exposures.size() : 0;
+    text("SEED "+data.seed+"   |   "+player.label()+"   |   DELIVERED "+player.delivered+" / "+total,22,height-19);
+    textAlign(RIGHT,CENTER);
+    text(nf(frameRate,0,0)+" FPS   /   "+nf(layout.zoom,0,2)+"x VIEW",width-PANEL_WIDTH-22,height-19);
+    float fraction=data.lastRound() == 0 ? 1 : (float)player.completedRound/data.lastRound();
+    fill(77,180,191,130); rect(0,height-40,(width-PANEL_WIDTH)*fraction,2);
   }
 }
 
 color opinionToColor(float opinion) {
-  color negative = color(217, 92, 137);
-  color neutral = color(231, 225, 214);
-  color positive = color(77, 180, 191);
-  float value = constrain(opinion, -1, 1);
-
-  if (value < 0) {
-    return lerpColor(neutral, negative, -value);
-  }
-
-  return lerpColor(neutral, positive, value);
+  color negative=color(217,92,137), neutral=color(231,225,214), positive=color(77,180,191);
+  float value=constrain(opinion,-1,1);
+  return value < 0 ? lerpColor(neutral,negative,-value) : lerpColor(neutral,positive,value);
 }

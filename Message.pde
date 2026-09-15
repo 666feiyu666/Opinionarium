@@ -8,11 +8,12 @@ class Message {
   boolean delivered = false;
   PVector controlPoint;
 
-  Message(Agent author, Agent receiver, float stance) {
+  Message(Agent author, Agent receiver, float stance, String messageId, int round) {
     this.author = author;
     this.receiver = receiver;
     this.stance = stance;
-    this.travelSpeed = random(0.62, 0.86);
+    Random rng = new Random(31L * messageId.hashCode() + receiver.id + 1000003L * round);
+    this.travelSpeed = 0.82 + rng.nextFloat() * 0.22;
     this.controlPoint = createControlPoint();
   }
 
@@ -24,10 +25,10 @@ class Message {
     float easedProgress = smoothStep(progress);
 
     noFill();
-    stroke(opinionToColor(stance), 58);
+    stroke(opinionToColor(stance), 38);
     strokeWeight(1.2);
     beginShape();
-    int pathSegments = 24;
+    int pathSegments = 18;
 
     for (int index = 0; index <= pathSegments; index++) {
       float pathProgress = easedProgress * index / float(pathSegments);
@@ -45,18 +46,18 @@ class Message {
       float trailStrength = 1 - index / float(trailCount + 1);
 
       noStroke();
-      fill(opinionToColor(stance), 80 * trailStrength);
-      circle(trailPosition.x, trailPosition.y, 3 + 4 * trailStrength);
+      fill(opinionToColor(stance), 65 * trailStrength);
+      circle(trailPosition.x, trailPosition.y, 1.5 + 2 * trailStrength);
     }
 
     PVector currentPosition = pointOnCurve(easedProgress);
 
     noStroke();
     fill(opinionToColor(stance), 34);
-    circle(currentPosition.x, currentPosition.y, 20);
+    circle(currentPosition.x, currentPosition.y, 12);
 
     fill(opinionToColor(stance), 95);
-    circle(currentPosition.x, currentPosition.y, 13);
+    circle(currentPosition.x, currentPosition.y, 7);
 
     fill(opinionToColor(stance));
     circle(currentPosition.x, currentPosition.y, 7);
@@ -83,7 +84,7 @@ class Message {
     PVector direction = PVector.sub(receiver.position, author.position);
     float distance = max(1, direction.mag());
     PVector normal = new PVector(-direction.y / distance, direction.x / distance);
-    float bendDirection = random(1) < 0.5 ? -1 : 1;
+    float bendDirection = ((author.id + receiver.id) % 2 == 0) ? -1 : 1;
     float bendAmount = constrain(distance * 0.18, 18, 64) * bendDirection;
 
     return midpoint.add(normal.mult(bendAmount));

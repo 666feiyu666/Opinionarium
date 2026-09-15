@@ -15,7 +15,7 @@ class Connection {
       return;
     }
 
-    float alpha = localConnection ? 105 : 28;
+    float alpha = localConnection ? 110 : 16;
     stroke(161, 170, 190, alpha);
     strokeWeight(1);
     line(
